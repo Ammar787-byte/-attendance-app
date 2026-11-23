@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="الحضور والغياب">
+<meta name="theme-color" content="#1f6f64">
+<title>نظام الحضور والغياب</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.0.3/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-auth-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-firestore-compat.min.js"></script>
+<style>
+  :root{
+    --bg:#eef1ef; --bg2:#e4ede9; --surface:#ffffff; --text:#1c2927; --muted:#5c6b68; --border:#d8ddda;
+    --primary:#1f6f64; --primary-text:#ffffff;
+    --present:#3f7d44; --present-bg:#e2efe3;
+    --absent:#b1433a; --absent-bg:#f5e3e1;
+    --glass-bg:rgba(255,255,255,0.55); --glass-border:rgba(255,255,255,0.65); --glass-blur:blur(16px);
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --bg:#0e1917; --bg2:#13211d; --surface:#17302b; --text:#e9efed; --muted:#9fb3af; --border:#28433d;
+    --primary:#4fb3a1; --primary-text:#05201b;
+    --present:#7cc47f; --present-bg:#1f3b22;
+    --absent:#e08a7e; --absent-bg:#4a221d;
+    --glass-bg:rgba(255,255,255,0.08); --glass-border:rgba(255,255,255,0.16);
+  }
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  *{box-sizing:border-box;}
+  body{margin:0;background:linear-gradient(160deg,var(--bg2),var(--bg) 45%,var(--bg2));color:var(--text);font-family:system-ui,Tahoma,Arial,sans-serif;min-height:100%;transition:background .3s;}
+  body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--glass-bg);backdrop-filter:var(--glass-blur);}
+  header.topbar{position:sticky;top:0;padding-top:env(safe-area-inset-top,0px);background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);z-index:5;}
+  header.topbar h1{margin:0;padding:14px 16px 8px;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .header-actions{display:flex;gap:6px;align-items:center;}
+  .icon-btn{width:34px;height:34px;padding:0;border-radius:50%;background:var(--glass-bg);backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);font-size:1rem;display:flex;align-items:center;justify-content:center;}
+  .tabs{display:flex;gap:5px;padding:0 10px 12px;overflow-x:auto;}
+  .tab{flex:1;padding:9px 3px;border:1px solid var(--glass-border);background:var(--glass-bg);backdrop-filter:var(--glass-blur);color:var(--text);border-radius:10px;cursor:pointer;font-size:.78rem;white-space:nowrap;}
+  .tab.active{background:var(--primary);color:var(--primary-text);border-color:var(--primary);}
+  main{max-width:640px;margin:0 auto;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));}
+  .controls,.add-student-form,.add-group-form{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  input,select,textarea{flex:1;min-width:110px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:.9rem;font-family:inherit;}
+  button{padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-size:.9rem;transition:transform .12s ease;}
+  button:active{transform:scale(0.95);}
+  #addBtn,#scanToggle,#printCardsBtn,#addGroupBtn,#authSubmitBtn,#feedbackSend{background:var(--primary);color:var(--primary-text);border-color:var(--primary);white-space:nowrap;}
+  .scanner-box{background:var(--glass-bg);backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);border-radius:14px;padding:12px;margin-bottom:12px;text-align:center;}
+  .scanner-box video{width:100%;max-width:360px;border-radius:10px;background:#000;}
+  .scan-controls{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;flex-wrap:wrap;}
+  .scan-status{font-size:.85rem;color:var(--muted);min-height:1.2em;}
+  .summary{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:12px;font-size:.85rem;color:var(--muted);}
+  .student-list,.card-list,.group-list,.warning-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+  .student-row{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;flex-wrap:wrap;}
+  .student-row.present{background:var(--present-bg);}
+  .student-row.absent{background:var(--absent-bg);}
+  .card-row,.group-row{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .card-row .card-qr{width:56px;height:56px;flex:none;}
+  .card-row .card-qr img{width:100%;height:100%;}
+  .card-info{flex:1;display:flex;flex-direction:column;gap:2px;}
+  .name{font-weight:600;}
+  .group-tag{font-size:.75rem;color:var(--muted);font-weight:400;}
+  .phones{font-size:.75rem;color:var(--muted);}
+  .actions{display:flex;gap:6px;}
+  .btn-present.active{background:var(--present);color:#fff;border-color:var(--present);}
+  .btn-absent.active{background:var(--absent);color:#fff;border-color:var(--absent);}
+  .btn-delete{color:var(--absent);}
+  .group-row{justify-content:space-between;}
+  .group-row .gname{font-weight:600;}
+  .group-row .gcount{font-size:.8rem;color:var(--muted);}
+  .warning-row{background:var(--absent-bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .warning-row .name{display:block;margin-bottom:4px;}
+  .warning-row .phones a{color:var(--text);text-decoration:underline;}
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:auto;display:block;}
+  th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--border);font-size:.85rem;white-space:nowrap;}
+  th{color:var(--muted);font-weight:600;}
+  .hidden{display:none;}
+  .empty{color:var(--muted);text-align:center;padding:20px;font-size:.9rem;}
+  #printArea{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea,#printArea *{visibility:visible;}
+    #printArea{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;position:absolute;top:0;right:0;left:0;}
+    .print-card{border:1px dashed #999;padding:10px;text-align:center;}
+    .print-card img{width:90px;height:90px;}
+  }
+  #authView{max-width:360px;margin:60px auto;padding:22px;background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--glass-border);border-radius:18px;position:relative;}
+  #authView h2{margin:0 0 14px;text-align:center;font-size:1.1rem;}
+  #authView input{width:100%;margin-bottom:10px;}
+  #authView button{width:100%;padding:10px;}
+  .auth-error{color:var(--absent);font-size:.85rem;min-height:1.2em;margin:6px 0;}
+  #authToggleLink{display:block;text-align:center;margin-top:12px;font-size:.85rem;color:var(--primary);cursor:pointer;}
+  .wa-link{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding:10px;border-radius:10px;text-decoration:none;font-size:.85rem;font-weight:600;color:#0d3b1f;background:#25d366;}
+  .wa-fab{position:fixed;left:16px;bottom:calc(76px + env(safe-area-inset-bottom,0px));width:50px;height:50px;border-radius:50%;background:#25d366;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.3rem;text-decoration:none;z-index:8;box-shadow:0 4px 16px rgba(0,0,0,.25);}
+  .input-wrap{position:relative;margin-bottom:10px;}
+  .input-wrap input{width:100%;margin-bottom:0;padding-left:38px;}
+  .eye-btn{position:absolute;left:3px;top:3px;bottom:3px;width:32px;border:none;background:transparent;font-size:1rem;padding:0;}
+  .remember-row{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted);margin:-2px 0 12px;cursor:pointer;}
+  .remember-row input{flex:none;width:auto;margin:0;}
+  @keyframes shakeAnim{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-8px)}40%,60%{transform:translateX(8px)}}
+  .shake{animation:shakeAnim .4s;border-color:var(--absent) !important;}
+  .theme-toggle-auth{position:absolute;top:14px;left:14px;}
+  .fab{position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:50px;height:50px;font-size:1.3rem;z-index:8;box-shadow:0 4px 16px rgba(0,0,0,.2);}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px;}
+  .modal-box{width:100%;max-width:380px;padding:18px;border-radius:16px;background:var(--surface);border:1px solid var(--border);}
+  .modal-box h3{margin:0 0 12px;}
+  .modal-box select,.modal-box textarea{width:100%;margin-bottom:10px;}
+  .modal-box textarea{resize:vertical;}
+  .close-btn{width:100%;background:transparent;}
+</style>
+</head>
+<body>
+<section id="authView">
+  <button id="themeToggleAuth" class="icon-btn theme-toggle-auth">🌙</button>
+  <h2>📋 نظام الحضور والغياب</h2>
+  <input type="email" id="authEmail" placeholder="البريد الإلكتروني" autocomplete="username">
+  <label class="remember-row"><input type="checkbox" id="rememberMe" checked> تذكرني</label>
+  <div class="input-wrap">
+    <input type="password" id="authPassword" placeholder="كلمة المرور" autocomplete="current-password">
+    <button type="button" class="eye-btn" id="toggleEye">👁️</button>
+  </div>
+  <p class="auth-error" id="authError"></p>
+  <button id="authSubmitBtn">دخول</button>
+  <a id="authToggleLink">مفيش عندك حساب؟ اعمل واحد</a>
+  <a id="forgotLink" style="display:block;text-align:center;margin-top:6px;font-size:.8rem;color:var(--muted);cursor:pointer;">نسيت كلمة المرور؟</a>
+  <a id="waAuthLink" class="wa-link" href="https://wa.me/201116051798?text=%D9%85%D8%B1%D8%AD%D8%A8%D8%A7%D9%8B%D8%8C%20%D9%85%D8%AD%D8%AA%D8%A7%D8%AC%20%D9%85%D8%B3%D8%A7%D8%B9%D8%AF%D8%A9" target="_blank" rel="noopener">💬 تواصل معنا على واتساب</a>
+</section>
+
+<div id="appRoot" class="hidden">
+<header class="topbar">
+  <h1>📋 نظام الحضور والغياب
+    <span class="header-actions">
+      <button id="themeToggle" class="icon-btn">🌙</button>
+      <button id="logoutBtn" class="icon-btn">⎋</button>
+    </span>
+  </h1>
+  <div class="tabs">
+    <button class="tab active" id="tabAttendance">الحضور</button>
+    <button class="tab" id="tabWarnings">⚠ تحذير غياب</button>
+    <button class="tab" id="tabStudents">الطلاب</button>
+    <button class="tab" id="tabReport">التقرير</button>
+  </div>
+</header>
+<main>
+  <section id="viewAttendance">
+    <div class="scanner-box">
+      <video id="video" playsinline muted></video>
+      <canvas id="canvas" class="hidden"></canvas>
+      <div class="scan-controls">
+        <button id="scanToggle">تشغيل الكاميرا</button>
+        <label class="icon-btn upload-label" style="width:auto;border-radius:8px;padding:9px 12px;" title="تحميل صورة كود">📁
+          <input type="file" id="qrImageFile" accept="image/*" class="hidden">
+        </label>
+        <span class="scan-status" id="scanStatus">اضغط "تشغيل الكاميرا" وامسح كارنيه الطالب</span>
+      </div>
+    </div>
+    <div class="controls">
+      <input type="date" id="dateInput">
+      <select id="groupFilter"></select>
+    </div>
+    <div class="controls">
+      <input type="text" id="searchInput" placeholder="🔍 ابحث بالاسم">
+    </div>
+    <div class="summary" id="summary"></div>
+    <ul class="student-list" id="studentList"></ul>
+  </section>
+
+  <section id="viewWarnings" class="hidden">
+    <div class="controls">
+      <input type="date" id="warnDateInput">
+    </div>
+    <ul class="warning-list" id="warningList"></ul>
+  </section>
+
+  <section id="viewStudents" class="hidden">
+    <h3 style="margin:4px 0">المجموعات</h3>
+    <div class="add-group-form">
+      <input type="text" id="newGroupName" placeholder="اسم المجموعة">
+      <input type="number" id="newGroupCount" placeholder="عدد الطلاب" min="0">
+      <button id="addGroupBtn">+ مجموعة</button>
+    </div>
+    <ul class="group-list" id="groupList"></ul>
+
+    <h3 style="margin:16px 0 4px">الطلاب</h3>
+    <div class="add-student-form">
+      <input type="text" id="newName" placeholder="اسم الطالب">
+      <input type="tel" id="newPhone" placeholder="رقم الطالب">
+      <input type="tel" id="newParentPhone" placeholder="رقم ولي الأمر">
+      <select id="newGroupSelect"></select>
+      <button id="addBtn">+ إضافة</button>
+    </div>
+    <div class="controls">
+      <button id="printCardsBtn">🖨 طباعة كروت كل الطلاب</button>
+    </div>
+    <ul class="card-list" id="cardList"></ul>
+    <div id="printArea"></div>
+  </section>
+
+  <section id="viewReport" class="hidden">
+    <div class="controls">
+      <select id="reportGroupFilter"></select>
+    </div>
+    <table>
+      <thead><tr><th>الاسم</th><th>المجموعة</th><th>حضور</th><th>غياب</th><th>النسبة</th></tr></thead>
+      <tbody id="reportBody"></tbody>
+    </table>
+  </section>
+</main>
+</div>
+
+<a id="waFab" class="wa-fab hidden" href="https://wa.me/201116051798?text=%D9%85%D8%B1%D8%AD%D8%A8%D8%A7%D9%8B%D8%8C%20%D9%85%D8%AD%D8%AA%D8%A7%D8%AC%20%D9%85%D8%B3%D8%A7%D8%B9%D8%AF%D8%A9%20%D9%81%D9%8A%20%D8%A7%D9%84%D9%86%D8%B8%D8%A7%D9%85" target="_blank" rel="noopener" title="واتساب - خدمة العملاء">💬</a>
+<button id="feedbackFab" class="icon-btn fab hidden" title="ملاحظات واقتراحات">📝</button>
+<div id="feedbackModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>تواصل معنا</h3>
+    <select id="feedbackType">
+      <option value="ملاحظة">ملاحظة أو اقتراح</option>
+      <option value="مشكلة">مشكلة تقنية</option>
+      <option value="استفسار">استفسار / خدمة عملاء</option>
+    </select>
+    <textarea id="feedbackText" rows="4" placeholder="اكتب رسالتك هنا..."></textarea>
+    <button id="feedbackSend">إرسال</button>
+    <p class="auth-error" id="feedbackStatus"></p>
+    <button id="feedbackClose" class="close-btn">إغلاق</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const firebaseConfig = {
+    apiKey: "AIzaSyC_yv92qo_n2MLhIcjgBroY5VjdO0cv9KA",
+    authDomain: "ammar787.firebaseapp.com",
+    projectId: "ammar787",
+    storageBucket: "ammar787.firebasestorage.app",
+    messagingSenderId: "1054290583645",
+    appId: "1:1054290583645:web:5f355677b8242abfcbedb4"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const dbRef = firebase.firestore();
+  try{ dbRef.enablePersistence({synchronizeTabs:true}); }catch(e){}
+
+  // --- Theme ---
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  let theme = localStorage.getItem('cs_theme') || (prefersDark?'dark':'light');
+  function applyTheme(){
+    document.documentElement.setAttribute('data-theme', theme);
+    const icon = theme==='dark' ? '☀️' : '🌙';
+    document.getElementById('themeToggle').textContent = icon;
+    document.getElementById('themeToggleAuth').textContent = icon;
+  }
+  function toggleTheme(){ theme = theme==='dark'?'light':'dark'; localStorage.setItem('cs_theme',theme); applyTheme(); }
+  applyTheme();
+  document.getElementById('themeToggle').addEventListener('click',toggleTheme);
+  document.getElementById('themeToggleAuth').addEventListener('click',toggleTheme);
+
+  function shake(el){ el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); setTimeout(()=>el.classList.remove('shake'),450); }
+
+  let students = [], groups = [], attendance = {}, uid = null;
+  function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  function codeOf(s){return 'CTR-'+s.id;}
+  function userCol(name){return dbRef.collection('users').doc(uid).collection(name);}
+
+  const dateInput=document.getElementById('dateInput');
+  const warnDateInput=document.getElementById('warnDateInput');
+  const groupFilter=document.getElementById('groupFilter');
+  const searchInput=document.getElementById('searchInput');
+  const reportGroupFilter=document.getElementById('reportGroupFilter');
+  const newGroupSelect=document.getElementById('newGroupSelect');
+  const studentList=document.getElementById('studentList');
+  const warningList=document.getElementById('warningList');
+  const cardList=document.getElementById('cardList');
+  const groupList=document.getElementById('groupList');
+  const summaryEl=document.getElementById('summary');
+  const reportBody=document.getElementById('reportBody');
+  dateInput.value=todayStr();
+  warnDateInput.value=todayStr();
+
+  function fillGroupSelects(){
+    const opts='<option value="">كل المجموعات</option>'+groups.map(g=>`<option value="${g.name}">${g.name}</option>`).join('');
+    groupFilter.innerHTML=opts; reportGroupFilter.innerHTML=opts;
+    newGroupSelect.innerHTML='<option value="">بدون مجموعة</option>'+groups.map(g=>`<option value="${g.name}">${g.name}</option>`).join('');
+  }
+
+  function renderGroups(){
+    groupList.innerHTML = groups.length ? groups.map(g=>{
+      const actual=students.filter(s=>s.group===g.name).length;
+      return `<li class="group-row" data-id="${g.id}">
+        <span class="gname">${g.name}</span>
+        <span class="gcount">المسجل: ${actual} ${g.count?('/ المستهدف: '+g.count):''}</span>
+        <button class="btn-delete" data-act="delgroup">🗑</button>
+      </li>`;
+    }).join('') : '<div class="empty">لا يوجد مجموعات بعد</div>';
+  }
+
+  function renderStudents(){
+    const date=dateInput.value; const gf=groupFilter.value; const q=(searchInput.value||'').trim();
+    const dayRec=attendance[date]||{};
+    const list=students.filter(s=>(!gf||s.group===gf) && (!q||s.name.includes(q)));
+    studentList.innerHTML = list.length ? list.map(s=>{
+      const st=dayRec[s.id];
+      return `<li class="student-row ${st||''}" data-id="${s.id}">
+        <span class="name">${s.name} ${s.group?`<span class="group-tag">(${s.group})</span>`:''}</span>
+        <div class="actions">
+          <button class="btn-present ${st==='present'?'active':''}" data-act="present">حاضر</button>
+          <button class="btn-absent ${st==='absent'?'active':''}" data-act="absent">غائب</button>
+        </div>
+      </li>`;
+    }).join('') : '<div class="empty">لا يوجد طلاب بعد، أضفهم من تبويب "الطلاب"</div>';
+    const present=list.filter(s=>dayRec[s.id]==='present').length;
+    const absent=list.filter(s=>dayRec[s.id]==='absent').length;
+    summaryEl.innerHTML=`<span>الإجمالي: ${list.length}</span><span style="color:var(--present)">حاضر: ${present}</span><span style="color:var(--absent)">غائب: ${absent}</span><span>لم يُسجَّل: ${list.length-present-absent}</span>`;
+  }
+
+  function renderWarnings(){
+    const date=warnDateInput.value;
+    const dayRec=attendance[date]||{};
+    const absentees=students.filter(s=>dayRec[s.id]==='absent');
+    warningList.innerHTML = absentees.length ? absentees.map(s=>{
+      return `<li class="warning-row">
+        <span class="name">⚠ ${s.name} ${s.group?`<span class="group-tag">(${s.group})</span>`:''}</span>
+        <div class="phones">
+          📞 الطالب: ${s.phone?`<a href="tel:${s.phone}">${s.phone}</a>`:'-'} &nbsp; | &nbsp;
+          👪 ولي الأمر: ${s.parentPhone?`<a href="tel:${s.parentPhone}">${s.parentPhone}</a>`:'-'}
+        </div>
+      </li>`;
+    }).join('') : '<div class="empty">لا يوجد غياب مسجل في هذا اليوم 🎉</div>';
+  }
+
+  function makeQR(text){
+    for(let t=1;t<=15;t++){
+      try{ const qr=qrcode(t,'M'); qr.addData(text); qr.make(); return qr; }catch(e){}
+    }
+    return null;
+  }
+
+  function renderCardsTab(){
+    cardList.innerHTML = students.length ? students.map(s=>{
+      return `<li class="card-row" data-id="${s.id}">
+        <div class="card-qr" id="qr-${s.id}"></div>
+        <div class="card-info">
+          <span class="name">${s.name}</span>
+          ${s.group?`<span class="group-tag">${s.group}</span>`:''}
+          <span class="phones">📞 ${s.phone||'-'} ${s.parentPhone?(' · 👪 '+s.parentPhone):''}</span>
+        </div>
+        <button class="btn-delete" data-act="delete">🗑</button>
+      </li>`;
+    }).join('') : '<div class="empty">لا يوجد طلاب بعد، أضف أول طالب من فوق</div>';
+    students.forEach(s=>{
+      const el=document.getElementById('qr-'+s.id);
+      if(el){ const qr=makeQR(codeOf(s)); el.innerHTML = qr ? qr.createImgTag(3,2) : ''; }
+    });
+  }
+
+  function renderReport(){
+    const gf=reportGroupFilter.value;
+    const list=students.filter(s=>!gf||s.group===gf);
+    reportBody.innerHTML = list.length ? list.map(s=>{
+      let p=0,a=0;
+      Object.values(attendance).forEach(day=>{if(day[s.id]==='present')p++;else if(day[s.id]==='absent')a++;});
+      const total=p+a; const pct=total?Math.round(p/total*100):0;
+      return `<tr><td>${s.name}</td><td>${s.group||'-'}</td><td>${p}</td><td>${a}</td><td>${pct}%</td></tr>`;
+    }).join('') : '<tr><td colspan="5" class="empty">لا يوجد بيانات بعد</td></tr>';
+  }
+
+  async function loadAllData(){
+    const [sSnap,gSnap,aSnap]=await Promise.all([userCol('students').get(),userCol('groups').get(),userCol('attendance').get()]);
+    students = sSnap.docs.map(d=>({id:d.id,...d.data()}));
+    groups = gSnap.docs.map(d=>({id:d.id,...d.data()}));
+    attendance = {};
+    aSnap.docs.forEach(d=>{ attendance[d.id]=d.data(); });
+  }
+
+  document.getElementById('addGroupBtn').addEventListener('click', async ()=>{
+    const name=document.getElementById('newGroupName').value.trim();
+    const count=document.getElementById('newGroupCount').value;
+    if(!name||!uid)return;
+    const ref=await userCol('groups').add({name,count:count?Number(count):null});
+    groups.push({id:ref.id,name,count:count?Number(count):null});
+    document.getElementById('newGroupName').value=''; document.getElementById('newGroupCount').value='';
+    fillGroupSelects(); renderGroups();
+  });
+
+  groupList.addEventListener('click', async e=>{
+    const btn=e.target.closest('button'); if(!btn)return;
+    const row=e.target.closest('.group-row'); const id=row.dataset.id;
+    if(btn.dataset.act==='delgroup'){
+      if(!confirm('حذف المجموعة؟ (الطلاب فيها هيفضلوا موجودين)'))return;
+      await userCol('groups').doc(id).delete();
+      groups=groups.filter(g=>g.id!==id);
+      fillGroupSelects(); renderGroups();
+    }
+  });
+
+  document.getElementById('addBtn').addEventListener('click', async ()=>{
+    const name=document.getElementById('newName').value.trim();
+    const phone=document.getElementById('newPhone').value.trim();
+    const parentPhone=document.getElementById('newParentPhone').value.trim();
+    const group=newGroupSelect.value;
+    if(!name||!uid)return;
+    const ref=await userCol('students').add({name,phone,parentPhone,group});
+    students.push({id:ref.id,name,phone,parentPhone,group});
+    document.getElementById('newName').value='';
+    document.getElementById('newPhone').value='';
+    document.getElementById('newParentPhone').value='';
+    renderStudents(); renderCardsTab(); renderGroups();
+  });
+
+  studentList.addEventListener('click', async e=>{
+    const btn=e.target.closest('button'); if(!btn)return;
+    const row=e.target.closest('.student-row'); const id=row.dataset.id;
+    const date=dateInput.value; const act=btn.dataset.act;
+    attendance[date]=attendance[date]||{};
+    attendance[date][id]= attendance[date][id]===act? undefined : act;
+    if(attendance[date][id]===undefined) delete attendance[date][id];
+    await userCol('attendance').doc(date).set(attendance[date]);
+    renderStudents();
+  });
+
+  cardList.addEventListener('click', async e=>{
+    const btn=e.target.closest('button'); if(!btn)return;
+    const row=e.target.closest('.card-row'); const id=row.dataset.id;
+    if(btn.dataset.act==='delete'){
+      if(!confirm('حذف الطالب نهائيًا؟'))return;
+      await userCol('students').doc(id).delete();
+      students=students.filter(s=>s.id!==id);
+      renderCardsTab(); renderStudents(); renderGroups();
+    }
+  });
+
+  document.getElementById('printCardsBtn').addEventListener('click',()=>{
+    const area=document.getElementById('printArea');
+    area.innerHTML = students.map(s=>{
+      const qr=makeQR(codeOf(s));
+      return `<div class="print-card">${qr?qr.createImgTag(3,2):''}<div>${s.name}</div>${s.group?`<div>${s.group}</div>`:''}</div>`;
+    }).join('');
+    window.print();
+  });
+
+  dateInput.addEventListener('change',renderStudents);
+  groupFilter.addEventListener('change',renderStudents);
+  searchInput.addEventListener('input',renderStudents);
+  warnDateInput.addEventListener('change',renderWarnings);
+  reportGroupFilter.addEventListener('change',renderReport);
+
+  // --- Camera scanning ---
+  let stream=null, scanning=false, lastScan={code:null,time:0};
+  const video=document.getElementById('video');
+  const canvas=document.getElementById('canvas');
+  const ctx=canvas.getContext('2d', {willReadFrequently:true});
+  const scanStatus=document.getElementById('scanStatus');
+  const scanToggle=document.getElementById('scanToggle');
+  let detector=null;
+  if('BarcodeDetector' in window){
+    try{ detector=new BarcodeDetector({formats:['qr_code','code_128','ean_13']}); }catch(e){ detector=null; }
+  }
+
+  async function startScan(){
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject=stream; await video.play();
+      scanning=true; scanToggle.textContent='إيقاف الكاميرا';
+      scanStatus.textContent = detector ? 'وجّه الكاميرا نحو كارنيه الطالب (شغّال من غير نت)' : 'وجّه الكاميرا نحو كارنيه الطالب';
+      requestAnimationFrame(tick);
+    }catch(e){
+      scanStatus.textContent='تعذّر فتح الكاميرا. اسمح للمتصفح بالوصول إليها، أو استخدم أزرار "حاضر/غائب" يدويًا تحت.';
+    }
+  }
+  function stopScan(){
+    scanning=false;
+    if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    scanToggle.textContent='تشغيل الكاميرا';
+    scanStatus.textContent='اضغط "تشغيل الكاميرا" وامسح كارنيه الطالب';
+  }
+  async function tick(){
+    if(!scanning)return;
+    if(video.readyState===video.HAVE_ENOUGH_DATA){
+      if(detector){
+        try{
+          const codes=await detector.detect(video);
+          if(codes.length) handleScan(codes[0].rawValue);
+        }catch(e){}
+      } else if(window.jsQR){
+        canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+        const code=jsQR(imgData.data,imgData.width,imgData.height);
+        if(code && code.data) handleScan(code.data);
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  document.getElementById('qrImageFile').addEventListener('change', async (e)=>{
+    const file=e.target.files && e.target.files[0]; if(!file)return;
+    const img=new Image();
+    img.onload=async ()=>{
+      let code=null;
+      if(detector){
+        try{ const codes=await detector.detect(img); if(codes.length) code=codes[0].rawValue; }catch(err){}
+      }
+      if(!code && window.jsQR){
+        canvas.width=img.width; canvas.height=img.height;
+        ctx.drawImage(img,0,0);
+        const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+        const res=jsQR(imgData.data,imgData.width,imgData.height);
+        if(res) code=res.data;
+      }
+      if(code) handleScan(code);
+      else scanStatus.textContent='⚠ تعذّر قراءة كود من الصورة دي، جرب صورة أوضح';
+      e.target.value='';
+    };
+    img.src=URL.createObjectURL(file);
+  });
+  async function handleScan(text){
+    const now=Date.now();
+    if(text===lastScan.code && now-lastScan.time<2500)return;
+    lastScan={code:text,time:now};
+    const id = text.startsWith('CTR-') ? text.slice(4) : text;
+    let student = students.find(s=>s.id===id);
+    if(!student) student = students.find(s=>s.name.trim()===text.trim());
+    if(!student){ scanStatus.textContent='⚠ كود غير معروف لأي طالب مسجّل'; return; }
+    const date=dateInput.value;
+    attendance[date]=attendance[date]||{};
+    if(attendance[date][student.id]==='present'){
+      scanStatus.textContent=`✅ ${student.name} مسجّل حاضر بالفعل`;
+    } else {
+      attendance[date][student.id]='present';
+      await userCol('attendance').doc(date).set(attendance[date]);
+      scanStatus.textContent=`✅ تم تسجيل حضور: ${student.name}`;
+      renderStudents();
+    }
+  }
+  scanToggle.addEventListener('click',()=>{ scanning?stopScan():startScan(); });
+
+  // --- Tabs ---
+  const views={attendance:document.getElementById('viewAttendance'),warnings:document.getElementById('viewWarnings'),students:document.getElementById('viewStudents'),report:document.getElementById('viewReport')};
+  const tabs={attendance:document.getElementById('tabAttendance'),warnings:document.getElementById('tabWarnings'),students:document.getElementById('tabStudents'),report:document.getElementById('tabReport')};
+  function showTab(name){
+    Object.keys(views).forEach(k=>{views[k].classList.toggle('hidden',k!==name); tabs[k].classList.toggle('active',k===name);});
+    if(name!=='attendance') stopScan();
+    if(name==='warnings') renderWarnings();
+    if(name==='students'){ renderCardsTab(); renderGroups(); }
+    if(name==='report') renderReport();
+  }
+  tabs.attendance.addEventListener('click',()=>showTab('attendance'));
+  tabs.warnings.addEventListener('click',()=>showTab('warnings'));
+  tabs.students.addEventListener('click',()=>showTab('students'));
+  tabs.report.addEventListener('click',()=>showTab('report'));
+
+  // --- Feedback / support ---
+  const feedbackFab=document.getElementById('feedbackFab');
+  const feedbackModal=document.getElementById('feedbackModal');
+  feedbackFab.addEventListener('click',()=>feedbackModal.classList.remove('hidden'));
+  document.getElementById('feedbackClose').addEventListener('click',()=>feedbackModal.classList.add('hidden'));
+  document.getElementById('feedbackSend').addEventListener('click', async ()=>{
+    const btn=document.getElementById('feedbackSend');
+    const text=document.getElementById('feedbackText').value.trim();
+    const statusEl=document.getElementById('feedbackStatus');
+    if(!text){ shake(document.getElementById('feedbackText')); return; }
+    btn.disabled=true; const prevT=btn.textContent; btn.textContent='...جارٍ الإرسال';
+    try{
+      await dbRef.collection('feedback').add({
+        uid, email: auth.currentUser ? auth.currentUser.email : null,
+        type: document.getElementById('feedbackType').value,
+        text, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      statusEl.style.color='var(--present)'; statusEl.textContent='تم الإرسال، شكرًا لك! 🎉';
+      document.getElementById('feedbackText').value='';
+      setTimeout(()=>{ feedbackModal.classList.add('hidden'); statusEl.textContent=''; },1400);
+    }catch(e){
+      statusEl.style.color='var(--absent)'; statusEl.textContent='حصل خطأ في الإرسال، حاول تاني';
+    }
+    btn.disabled=false; btn.textContent=prevT;
+  });
+
+  // --- Auth ---
+  let authMode='login';
+  const authEmail=document.getElementById('authEmail');
+  const authPassword=document.getElementById('authPassword');
+  const authError=document.getElementById('authError');
+  const authSubmitBtn=document.getElementById('authSubmitBtn');
+  const authToggleLink=document.getElementById('authToggleLink');
+  const rememberMe=document.getElementById('rememberMe');
+  document.getElementById('toggleEye').addEventListener('click',()=>{
+    const show = authPassword.type==='password';
+    authPassword.type = show?'text':'password';
+    document.getElementById('toggleEye').textContent = show?'🙈':'👁️';
+  });
+  function isValidEmail(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
+  function authErrorAr(code){
+    const map={
+      'auth/email-already-in-use':'الإيميل ده متسجل بالفعل، جرب تدخل بدل ما تعمل حساب جديد',
+      'auth/invalid-email':'الإيميل مش صحيح',
+      'auth/weak-password':'كلمة المرور لازم تكون 6 حروف/أرقام على الأقل',
+      'auth/user-not-found':'الحساب ده مش موجود',
+      'auth/wrong-password':'كلمة المرور غلط',
+      'auth/invalid-credential':'الإيميل أو كلمة المرور غلط'
+    };
+    return map[code] || 'حصل خطأ، حاول تاني';
+  }
+  authToggleLink.addEventListener('click',()=>{
+    authMode = authMode==='login' ? 'signup' : 'login';
+    authSubmitBtn.textContent = authMode==='login' ? 'دخول' : 'إنشاء حساب';
+    authToggleLink.textContent = authMode==='login' ? 'مفيش عندك حساب؟ اعمل واحد' : 'عندك حساب بالفعل؟ ادخل';
+    authError.textContent='';
+  });
+  authSubmitBtn.addEventListener('click', async ()=>{
+    const email=authEmail.value.trim(); const pass=authPassword.value;
+    authError.style.color='var(--absent)';
+    authError.textContent='';
+    if(!isValidEmail(email)){ authError.textContent='الإيميل مش صحيح، اكتبه بالشكل ده: name@example.com'; shake(authEmail); return; }
+    if(pass.length<6){ authError.textContent='كلمة المرور لازم تكون 6 حروف/أرقام على الأقل'; shake(authPassword); return; }
+    authSubmitBtn.disabled=true; const prevT=authSubmitBtn.textContent;
+    authSubmitBtn.textContent = authMode==='login' ? '...جارٍ الدخول' : '...جارٍ الإنشاء';
+    try{
+      await auth.setPersistence(rememberMe.checked ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
+      if(authMode==='login') await auth.signInWithEmailAndPassword(email,pass);
+      else await auth.createUserWithEmailAndPassword(email,pass);
+    }catch(e){
+      authError.textContent = authErrorAr(e.code);
+      shake(authPassword);
+    }
+    authSubmitBtn.disabled=false; authSubmitBtn.textContent=prevT;
+  });
+  document.getElementById('forgotLink').addEventListener('click', async (e)=>{
+    e.preventDefault();
+    const email=authEmail.value.trim();
+    authError.style.color='var(--absent)';
+    if(!isValidEmail(email)){ authError.textContent='اكتب إيميلك الأول في الخانة فوق عشان نبعتلك رابط الاستعادة'; shake(authEmail); return; }
+    const link=e.target; const prevT=link.textContent; link.textContent='...جارٍ الإرسال';
+    try{
+      await auth.sendPasswordResetEmail(email);
+      authError.style.color='var(--present)';
+      authError.textContent='تم إرسال رابط استعادة كلمة المرور إلى إيميلك، افتح بريدك وتابع الخطوات.';
+    }catch(err){
+      authError.style.color='var(--absent)';
+      authError.textContent = authErrorAr(err.code);
+    }
+    link.textContent=prevT;
+  });
+  document.getElementById('logoutBtn').addEventListener('click', ()=> auth.signOut());
+
+  auth.onAuthStateChanged(async user=>{
+    if(user){
+      uid=user.uid;
+      document.getElementById('authView').classList.add('hidden');
+      document.getElementById('appRoot').classList.remove('hidden');
+      feedbackFab.classList.remove('hidden');
+      document.getElementById('waFab').classList.remove('hidden');
+      await loadAllData();
+      fillGroupSelects(); renderStudents();
+    } else {
+      uid=null;
+      document.getElementById('authView').classList.remove('hidden');
+      document.getElementById('appRoot').classList.add('hidden');
+      feedbackFab.classList.add('hidden');
+      feedbackModal.classList.add('hidden');
+      document.getElementById('waFab').classList.add('hidden');
+    }
+  });
+})();
+</script>
+</body>
+</html>
